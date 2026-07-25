@@ -110,7 +110,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text("⚡ Extracting audio stream...")
 
         ydl_opts_download = {
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
+            "format": "bestaudio/best",
             "outtmpl": output_template,
             "quiet": True,
             # ⚡ BYPASS YOUTUBE BOT DETECTION
