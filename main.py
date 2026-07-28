@@ -102,7 +102,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "player_client": ["mweb", "ios", "android", "web"]
                 }
             }
-        
+        }
+
         # Load cookies if cookiefile exists
         if COOKIE_PATH.exists():
             ydl_opts_info["cookiefile"] = str(COOKIE_PATH)
@@ -127,7 +128,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Step 2: Extract Best Audio Stream WITHOUT FFmpeg
         await status_message.edit_text("⚡ Extracting audio stream...")
 
-       ydl_opts_download = {
+        ydl_opts_download = {
             # ⚡ Fallback chain: best audio -> any audio stream -> best overall video/audio format
             "format": "bestaudio/best/b",
             "outtmpl": output_template,
