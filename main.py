@@ -46,13 +46,20 @@ TEMP_DIR = Path("temp")
 
 TEMP_DIR.mkdir(exist_ok=True)
 
+YOUTUBE_COOKIES_RAW = os.getenv("YOUTUBE_COOKIES")
+COOKIE_PATH = Path("cookies.txt")
+
+if YOUTUBE_COOKIES_RAW:
+    with open(COOKIE_PATH, "w", encoding="utf-8") as f:
+        f.write(YOUTUBE_COOKIES_RAW)
+    logging.info("YouTube cookies loaded from environment variable.")
 
 
 # CONFIGURATION
 
 TELEGRAM_BOT_TOKEN = os.getenv("API_KEY")
 
-ADSTERRA_SMARTLINK = "https://www.effectivecpmnetwork.com/nybmz13m?key=420a338c007f51a535f6a5b25837a53a"
+ADSTERRA_SMARTLINK = "https://www.effectivecpmnetwork.com/krgymfijv?key=dfdfcea0f160083fa0280f51e6b2b362"
 
 
 
@@ -67,7 +74,6 @@ pending_downloads = {}
 def sanitize_filename(name: str) -> str:
 
     return re.sub(r"[^\w\s-]", "", name).strip()[:100]
-
 
 
 
