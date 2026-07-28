@@ -1,5 +1,7 @@
 import os
 import re
+import json
+from datetime import datetime
 from dotenv import load_dotenv
 import uuid
 import asyncio
@@ -20,8 +22,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 load_dotenv()
+
 TEMP_DIR = Path("temp")
 TEMP_DIR.mkdir(exist_ok=True)
+
+# File paths for stats & user tracking
+STATS_FILE = Path("stats.json")
+USERS_FILE = Path("users.txt")
 
 # CONFIGURATION
 TELEGRAM_BOT_TOKEN = os.getenv("API_KEY")
@@ -29,6 +36,60 @@ ADSTERRA_SMARTLINK = "https://www.effectivecpmnetwork.com/nybmz13m?key=420a338c0
 
 # Temporary store for pending conversions: { user_id: { "title": str, "file_path": Path } }
 pending_downloads = {}
+
+
+# --- TRACKING HELPER FUNCTIONS ---
+
+def track_user(user):
+    """Saves user ID, username, and full name to users.txt without duplicating existing users."""
+    user_id = user.id
+    username = f"@{user.username}" if user.username else "NoUsername"
+    full_name = user.full_name or "Unknown"
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    entry = f"{user_id} | {username} | {full_name} | {date_str}\n"
+
+    try:
+        # Check if user ID is already saved
+        if USERS_FILE.exists():
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                if str(user_id) in f.read():
+                    return  # User already logged
+
+        # Append new user entry
+        with open(USERS_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+            logging.info(f"[User Tracker] Saved new user: {username} ({user_id})")
+    except Exception as e:
+        logging.error(f"Failed to save user to text file: {e}")
+
+
+def increment_download_count():
+    """Increments total download count and daily download count inside stats.json."""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    stats = {"total_downloads": 0, "daily_downloads": {}}
+
+    try:
+        if STATS_FILE.exists():
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                stats = json.load(f)
+
+        # Update total count
+        stats["total_downloads"] = stats.get("total_downloads", 0) + 1
+
+        # Update daily count
+        daily = stats.get("daily_downloads", {})
+        daily[today] = daily.get(today, 0) + 1
+        stats["daily_downloads"] = daily
+
+        # Save back to JSON
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=4)
+
+        logging.info(f"[Stats Tracker] Download count updated. Total: {stats['total_downloads']}")
+    except Exception as e:
+        logging.error(f"Failed to update stats.json: {e}")
 
 
 def sanitize_filename(name: str) -> str:
@@ -45,12 +106,15 @@ def remove_file(filepath: Path):
         logging.error(f"Failed to delete {filepath}: {e}")
 
 
+# --- TELEGRAM BOT HANDLERS ---
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username or "User"
-    
+    user = update.message.from_user
+    track_user(user)  # Log user info
+
+    username = user.username or "User"
     await update.message.reply_text(
-        f"🎵 *Welcome, @{username}! (ID: `{user_id}`)*\n\n"
+        f"🎵 *Welcome, @{username}! (ID: `{user.id}`)*\n\n"
         "Send me any valid video/audio link to extract the audio.\n"
         "⚠️ *Limit:* Video duration must be under 30 minutes.",
         parse_mode="Markdown"
@@ -58,7 +122,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+    user = update.message.from_user
+    track_user(user)  # Log user info
+
+    user_id = user.id
     text = update.message.text.strip()
 
     # Validate URL
@@ -77,7 +144,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "quiet": True,
             "no_warnings": True,
             "extract_flat": False,
-            # ⚡ BYPASS YOUTUBE BOT DETECTION
             "extractor_args": {
                 "youtube": {
                     "player_client": ["android", "ios"]
@@ -85,7 +151,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         }
 
-        # Optional: Load cookies if cookies.txt exists in root directory
         if Path("cookies.txt").exists():
             ydl_opts_info["cookiefile"] = "cookies.txt"
 
@@ -99,7 +164,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = info.get("title", "audio")
 
             # 🛑 Hard Limit: 30 minutes (1800s)
-            if duration > 1800:
+            if duration and duration > 1800:
                 mins = round(duration / 60)
                 await status_message.edit_text(
                     f"🛑 Video exceeds the 30-minute limit ({mins} mins long)."
@@ -113,7 +178,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "format": "bestaudio/best",
             "outtmpl": output_template,
             "quiet": True,
-            # ⚡ BYPASS YOUTUBE BOT DETECTION
             "extractor_args": {
                 "youtube": {
                     "player_client": ["android", "ios"]
@@ -121,7 +185,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         }
 
-        # Optional: Load cookies if cookies.txt exists in root directory
         if Path("cookies.txt").exists():
             ydl_opts_download["cookiefile"] = "cookies.txt"
 
@@ -133,7 +196,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_message.edit_text("❌ Audio extraction failed.")
             return
 
-        # Store pending download details using Telegram User ID
+        # Store pending download details
         pending_downloads[user_id] = {
             "title": title,
             "file_path": downloaded_file,
@@ -159,7 +222,10 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback triggered when user presses 'I clicked the link'."""
     query = update.callback_query
     await query.answer()
-    user_id = query.from_user.id
+    
+    user = query.from_user
+    track_user(user)  # Log user info
+    user_id = user.id
 
     if user_id not in pending_downloads:
         await query.edit_message_text("❌ Download session expired. Please send the link again.")
@@ -187,8 +253,11 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 audio=audio_file,
                 title=title,
                 filename=f"{safe_title}{ext}",
-                caption=f"Downloaded via Audio Bot"
+                caption="Downloaded via Audio Bot"
             )
+
+        # 📊 Increment JSON Statistics Counter on Successful Download Delivery
+        increment_download_count()
 
         # Remove status message
         await query.delete_message()
