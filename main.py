@@ -162,13 +162,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
-        # Step 1: Extract Info & Check 30-Minute Limit
+       
+
+if COOKIE_PATH.exists():
+    ydl_opts_info["cookiefile"] = str(COOKIE_PATH)
 
         ydl_opts_info = {
 
             "quiet": True,
             "no_warnings": True,
-    
+            "extract_flat": False,
 
             # ⚡ BYPASS YOUTUBE BOT DETECTION
 
@@ -188,9 +191,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Optional: Load cookies if cookies.txt exists in root directory
 
-        if Path("cookies.txt").exists():
-
-            ydl_opts_info["cookiefile"] = "cookies.txt"
+        if COOKIE_PATH.exists():
+              ydl_opts_info["cookiefile"] = str(COOKIE_PATH)
 
 
 
@@ -236,7 +238,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ydl_opts_download = {
 
-            "format": "ba/ba*/b",
+            "format": "bestaudio/best",
 
             "outtmpl": output_template,
 
@@ -261,9 +263,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Optional: Load cookies if cookies.txt exists in root directory
 
-        if Path("cookies.txt").exists():
-
-            ydl_opts_download["cookiefile"] = "cookies.txt"
+        if COOKIE_PATH.exists():
+                ydl_opts_download["cookiefile"] = str(COOKIE_PATH)
 
 
 
