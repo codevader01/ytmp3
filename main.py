@@ -99,7 +99,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "extract_flat": False,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["mweb", "ios"]
+                    "player_client": ["mweb", "ios","android"]
                 }
             }
         }
@@ -130,12 +130,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ydl_opts_download = {
             # ⚡ Fallback chain: best audio -> any audio stream -> best overall video/audio format
-            "format": "bestaudio/best/b",
+            "format": "ba/ba*/b/best",
             "outtmpl": output_template,
             "quiet": True,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["mweb", "ios"]
+                    "player_client": ["mweb", "ios","android"]
                 }
             }
         }
