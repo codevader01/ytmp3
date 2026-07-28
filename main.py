@@ -168,8 +168,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             "quiet": True,
             "no_warnings": True,
-             "username": "oauth2",
-             "password": "",
+    
 
             # ⚡ BYPASS YOUTUBE BOT DETECTION
 
@@ -242,8 +241,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "outtmpl": output_template,
 
             "quiet": True,
-            "username": "oauth2",
-            "password": "",
+            
 
             # ⚡ BYPASS YOUTUBE BOT DETECTION
 
