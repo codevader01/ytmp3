@@ -102,7 +102,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "player_client": ["mweb", "ios", "android", "web"]
                 }
             }
-        }
+        
         # Load cookies if cookiefile exists
         if COOKIE_PATH.exists():
             ydl_opts_info["cookiefile"] = str(COOKIE_PATH)
