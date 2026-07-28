@@ -124,7 +124,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text("⚡ Extracting audio stream...")
 
         ydl_opts_download = {
-            "format": "bestaudio/best",
+            "format": "ba/ba*/b",
             "outtmpl": output_template,
             "quiet": True,
         }
