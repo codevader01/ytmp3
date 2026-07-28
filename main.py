@@ -99,7 +99,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "extract_flat": False,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["mweb", "ios", "android", "web"]
+                    "player_client": ["mweb", "ios"]
                 }
             }
         }
@@ -135,7 +135,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "quiet": True,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["mweb", "ios", "android", "web"]
+                    "player_client": ["mweb", "ios"]
                 }
             }
         }
