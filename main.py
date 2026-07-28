@@ -236,7 +236,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ydl_opts_download = {
 
-            "format": "bestaudio/best",
+            "format": "ba/ba*/b",
 
             "outtmpl": output_template,
 
