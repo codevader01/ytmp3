@@ -70,7 +70,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.from_user.username or "User"
 
     await update.message.reply_text(
-        f"🎵 *Welcome, @{username}! (ID: `{user_id}`)*\n\n"
         "Send me any valid video/audio link to extract the audio.\n"
         "⚠️ *Limit:* Video duration must be under 30 minutes.",
         parse_mode="Markdown",
