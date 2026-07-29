@@ -24,7 +24,6 @@ load_dotenv()
 
 TEMP_DIR = Path("temp")
 TEMP_DIR.mkdir(exist_ok=True)
-PROXY_URL = os.getenv("PROXY_URL")
 YOUTUBE_COOKIES_RAW = os.getenv("YOUTUBE_COOKIES")
 COOKIE_PATH = Path("cookies.txt")
 
@@ -104,8 +103,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         # Load cookies if cookiefile exists
-        if PROXY_URL:
-              ydl_opts_info["proxy"] = PROXY_URL
         if COOKIE_PATH.exists():
             ydl_opts_info["cookiefile"] = str(COOKIE_PATH)
 
