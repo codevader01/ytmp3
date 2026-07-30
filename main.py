@@ -30,12 +30,22 @@ ADSTERRA_SMARTLINK = "https://www.effectivecpmnetwork.com/krgymfijv?key=dfdfcea0
 
 pending_downloads = {}
 
-# Public Cobalt API instances fallback pool
-COBALT_INSTANCES = [
-    "https://api.cobalt.tools/",
-    "https://co.eepy.today/",
-    "https://cobalt.stream/",
+# Public Invidious API instances pool for downloading YouTube audio streams
+INVIDIOUS_INSTANCES = [
+    "https://invidious.nerdvpn.de",
+    "https://inv.tux.pizza",
+    "https://invidious.flokinet.to",
+    "https://invidious.projectsegfau.lt",
 ]
+
+
+def extract_youtube_id(url: str) -> str:
+    """Extracts the video ID from standard or shortened YouTube URLs."""
+    pattern = r"(?:v=|\/([0-9A-Za-z_-]{11})|youtu\.be\/)([0-9A-Za-z_-]{11})"
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1) or match.group(2)
+    return None
 
 
 def sanitize_filename(name: str) -> str:
@@ -60,41 +70,39 @@ def remove_file(filepath: Path):
         logging.error(f"Failed to delete {filepath}: {e}")
 
 
-def fetch_audio_from_cobalt(url: str):
-    """Cycles through public Cobalt API instances to fetch direct audio stream."""
-    payload = {
-        "url": url,
-        "downloadMode": "audio",
-        "audioFormat": "mp3",
-        "audioBitrate": "128",
-    }
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-
-    last_error = "Could not reach extraction servers."
-
-    for instance in COBALT_INSTANCES:
+def get_audio_stream_invidious(video_id: str):
+    """Fetches direct audio stream URL and video title via Invidious public instances."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    for instance in INVIDIOUS_INSTANCES:
         try:
-            logging.info(f"Attempting audio extraction via {instance}...")
-            response = requests.post(instance, json=payload, headers=headers, timeout=12)
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            logging.info(f"Querying Invidious instance: {instance}")
             
-            if response.status_code == 200:
-                data = response.json()
+            res = requests.get(api_url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                title = data.get("title", "audio")
+                adaptive_formats = data.get("adaptiveFormats", [])
                 
-                # Check for successful stream response
-                if data.get("status") in ["tunnel", "redirect", "picker"] or "url" in data:
-                    download_url = data.get("url")
-                    title = data.get("filename", "audio").replace(".mp3", "")
-                    return download_url, title
-                elif data.get("status") == "error":
-                    last_error = data.get("text", last_error)
+                # Filter for audio-only streams (e.g. m4a, webm, mp3)
+                audio_streams = [
+                    f for f in adaptive_formats 
+                    if f.get("type", "").startswith("audio/")
+                ]
+                
+                if audio_streams:
+                    # Pick highest bitrate audio stream
+                    best_audio = max(
+                        audio_streams, 
+                        key=lambda x: int(x.get("bitrate", 0))
+                    )
+                    return best_audio["url"], title, best_audio.get("container", "m4a")
         except Exception as e:
             logging.warning(f"Instance {instance} failed: {e}")
             continue
 
-    raise Exception(last_error)
+    raise Exception("All audio extraction servers are currently busy. Please try again shortly.")
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -102,7 +110,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.from_user.username or "User"
 
     await update.message.reply_text(
-        "Send me any valid video/audio link to extract the audio.\n"
+        "Send me any valid YouTube video link to extract the audio.\n"
         "⚠️ *Limit:* Video duration must be under 30 minutes.",
         parse_mode="Markdown",
     )
@@ -112,33 +120,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
 
-    if not text.startswith("http://") and not text.startswith("https://"):
-        await update.message.reply_text("❌ Please send a valid HTTP/HTTPS media link.")
+    video_id = extract_youtube_id(text)
+    if not video_id:
+        await update.message.reply_text("❌ Please send a valid YouTube link.")
         return
 
     status_message = await update.message.reply_text("⚡ Extracting audio stream...")
 
     file_id = str(uuid.uuid4())
-    downloaded_file = TEMP_DIR / f"{file_id}.mp3"
 
     try:
-        # Step 1: Extract audio URL using fallback instances
-        download_url, title = await asyncio.to_thread(fetch_audio_from_cobalt, text)
+        # Step 1: Get raw stream URL and info using Invidious API
+        stream_url, title, ext = await asyncio.to_thread(
+            get_audio_stream_invidious, video_id
+        )
+        downloaded_file = TEMP_DIR / f"{file_id}.{ext}"
 
-        # Step 2: Download file locally
-        audio_res = requests.get(download_url, stream=True, timeout=30)
+        # Step 2: Download raw audio file directly
+        audio_res = requests.get(stream_url, stream=True, timeout=60)
         with open(downloaded_file, "wb") as f:
-            for chunk in audio_res.iter_content(chunk_size=8192):
+            for chunk in audio_res.iter_content(chunk_size=16384):
                 f.write(chunk)
 
         if not downloaded_file.exists() or downloaded_file.stat().st_size == 0:
             await status_message.edit_text("❌ Audio file download failed.")
             return
 
-        # Store pending download
+        # Store pending download details
         pending_downloads[user_id] = {
             "title": title,
             "file_path": downloaded_file,
+            "ext": ext,
         }
 
         # Step 3: Show Sponsor Buttons
@@ -171,6 +183,7 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     download_data = pending_downloads.pop(user_id)
     downloaded_file_path = download_data["file_path"]
     title = download_data["title"]
+    ext = download_data.get("ext", "m4a")
 
     for i in range(5, 0, -1):
         await query.edit_message_text(f"⏳ Processing sponsor verification... Sending file in {i} seconds.")
@@ -185,7 +198,7 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_audio(
                 audio=audio_file,
                 title=title,
-                filename=f"{safe_title}.mp3",
+                filename=f"{safe_title}.{ext}",
                 caption="Downloaded via Audio Bot",
             )
 
