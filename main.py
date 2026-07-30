@@ -1,11 +1,12 @@
 import os
 import re
-from dotenv import load_dotenv
 import uuid
-from datetime import datetime
 import asyncio
 import logging
+import requests
 from pathlib import Path
+from dotenv import load_dotenv
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,7 +16,6 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-import yt_dlp
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -24,19 +24,10 @@ load_dotenv()
 
 TEMP_DIR = Path("temp")
 TEMP_DIR.mkdir(exist_ok=True)
-YOUTUBE_COOKIES_RAW = os.getenv("YOUTUBE_COOKIES")
-COOKIE_PATH = Path("cookies.txt")
 
-if YOUTUBE_COOKIES_RAW:
-    with open(COOKIE_PATH, "w", encoding="utf-8") as f:
-        f.write(YOUTUBE_COOKIES_RAW)
-    logging.info("YouTube cookies loaded from environment variable.")
-
-# CONFIGURATION
 TELEGRAM_BOT_TOKEN = os.getenv("API_KEY")
 ADSTERRA_SMARTLINK = "https://www.effectivecpmnetwork.com/krgymfijv?key=dfdfcea0f160083fa0280f51e6b2b362"
 
-# Temporary store for pending conversions: { user_id: { "title": str, "file_path": Path } }
 pending_downloads = {}
 
 
@@ -45,7 +36,6 @@ def sanitize_filename(name: str) -> str:
 
 
 def log_download_click(user):
-    """Appends the user's details and timestamp to downloads.txt when they click download."""
     username = f"@{user.username}" if user.username else "NoUsername"
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"{user.id} | {username} | {user.full_name} | {date_str}\n"
@@ -55,7 +45,6 @@ def log_download_click(user):
 
 
 def remove_file(filepath: Path):
-    """Deletes the temporary file instantly from local storage."""
     try:
         if filepath and filepath.exists():
             filepath.unlink()
@@ -79,84 +68,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
 
-    # Validate URL
     if not text.startswith("http://") and not text.startswith("https://"):
         await update.message.reply_text("❌ Please send a valid HTTP/HTTPS media link.")
         return
 
-    status_message = await update.message.reply_text("🔍 Checking video details...")
+    status_message = await update.message.reply_text("⚡ Extracting audio via Cobalt API...")
 
     file_id = str(uuid.uuid4())
-    output_template = str(TEMP_DIR / f"{file_id}.%(ext)s")
+    downloaded_file = TEMP_DIR / f"{file_id}.mp3"
 
     try:
-        # Step 1: Extract Info & Check 30-Minute Limit
-        ydl_opts_info = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": False,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android","ios", "mweb"]
-                }
-            }
+        # Call public Cobalt API endpoint
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "url": text,
+            "downloadMode": "audio",
+            "audioFormat": "mp3",
         }
 
-        # Load cookies if cookiefile exists
-        if COOKIE_PATH.exists():
-            ydl_opts_info["cookiefile"] = str(COOKIE_PATH)
+        response = requests.post("https://api.cobalt.tools/", json=payload, headers=headers)
+        res_data = response.json()
 
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            info = ydl.extract_info(text, download=False)
-            if not info:
-                await status_message.edit_text("❌ Could not retrieve media information.")
-                return
+        if response.status_code != 200 or "url" not in res_data:
+            error_msg = res_data.get("text", "Could not fetch video stream.")
+            await status_message.edit_text(f"❌ Failed: {error_msg}")
+            return
 
-            duration = info.get("duration", 0)
-            title = info.get("title", "audio")
+        download_url = res_data["url"]
+        title = res_data.get("filename", "audio").replace(".mp3", "")
 
-            # 🛑 Hard Limit: 30 minutes (1800s)
-            if duration and duration > 1800:
-                mins = round(duration / 60)
-                await status_message.edit_text(
-                    f"🛑 Video exceeds the 30-minute limit ({mins} mins long)."
-                )
-                return
-
-        # Step 2: Extract Best Audio Stream WITHOUT FFmpeg
-        await status_message.edit_text("⚡ Extracting audio stream...")
-
-        ydl_opts_download = {
-            # ⚡ Universal format matching: Audio-only -> Any Audio -> Best Combined Stream
-            "format": "ba/ba*/b/best",
-            "outtmpl": output_template,
-            "quiet": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android","ios", "mweb"]
-                }
-            }
-        }
-
-        # Load cookies if cookiefile exists
-        if COOKIE_PATH.exists():
-            ydl_opts_download["cookiefile"] = str(COOKIE_PATH)
-
-        with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
-            download_info = ydl.extract_info(text, download=True)
-            downloaded_file = Path(ydl.prepare_filename(download_info))
+        # Download audio stream to file
+        audio_res = requests.get(download_url, stream=True)
+        with open(downloaded_file, "wb") as f:
+            for chunk in audio_res.iter_content(chunk_size=8192):
+                f.write(chunk)
 
         if not downloaded_file.exists():
             await status_message.edit_text("❌ Audio extraction failed.")
             return
 
-        # Store pending download details using Telegram User ID
         pending_downloads[user_id] = {
             "title": title,
             "file_path": downloaded_file,
         }
 
-        # Step 3: Show Adsterra Smartlink & Verification Button
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎉 1. Click to Open Sponsor Link", url=ADSTERRA_SMARTLINK)],
             [InlineKeyboardButton("✅ 2. I clicked the link (Get Audio)", callback_data="confirm_ad_click")]
@@ -173,13 +131,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback triggered when user presses 'I clicked the link'."""
     query = update.callback_query
     await query.answer()
 
-    # Log user download click in downloads.txt
     log_download_click(query.from_user)
-
     user_id = query.from_user.id
 
     if user_id not in pending_downloads:
@@ -190,7 +145,6 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     downloaded_file_path = download_data["file_path"]
     title = download_data["title"]
 
-    # Step 4: 5-Second Delay
     for i in range(5, 0, -1):
         await query.edit_message_text(f"⏳ Processing sponsor verification... Sending file in {i} seconds.")
         await asyncio.sleep(1)
@@ -198,27 +152,23 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("📤 Uploading audio to Telegram...")
 
     try:
-        # Step 5: Send Native Audio File
         safe_title = sanitize_filename(title) or "audio"
-        ext = downloaded_file_path.suffix
 
         with open(downloaded_file_path, "rb") as audio_file:
             await context.bot.send_audio(
                 chat_id=query.message.chat_id,
                 audio=audio_file,
                 title=title,
-                filename=f"{safe_title}{ext}",
+                filename=f"{safe_title}.mp3",
                 caption="Downloaded via Audio Bot",
             )
 
-        # Remove status message
         await query.delete_message()
 
     except Exception as e:
         logging.error(f"Upload error for Telegram ID {user_id}: {e}")
         await query.edit_message_text("❌ Failed to send file.")
     finally:
-        # Step 6: Delete file instantly from local storage
         remove_file(downloaded_file_path)
 
 
