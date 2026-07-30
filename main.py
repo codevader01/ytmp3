@@ -30,6 +30,13 @@ ADSTERRA_SMARTLINK = "https://www.effectivecpmnetwork.com/krgymfijv?key=dfdfcea0
 
 pending_downloads = {}
 
+# Public Cobalt API instances fallback pool
+COBALT_INSTANCES = [
+    "https://api.cobalt.tools/",
+    "https://co.eepy.today/",
+    "https://cobalt.stream/",
+]
+
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r"[^\w\s-]", "", name).strip()[:100]
@@ -53,6 +60,43 @@ def remove_file(filepath: Path):
         logging.error(f"Failed to delete {filepath}: {e}")
 
 
+def fetch_audio_from_cobalt(url: str):
+    """Cycles through public Cobalt API instances to fetch direct audio stream."""
+    payload = {
+        "url": url,
+        "downloadMode": "audio",
+        "audioFormat": "mp3",
+        "audioBitrate": "128",
+    }
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    last_error = "Could not reach extraction servers."
+
+    for instance in COBALT_INSTANCES:
+        try:
+            logging.info(f"Attempting audio extraction via {instance}...")
+            response = requests.post(instance, json=payload, headers=headers, timeout=12)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Check for successful stream response
+                if data.get("status") in ["tunnel", "redirect", "picker"] or "url" in data:
+                    download_url = data.get("url")
+                    title = data.get("filename", "audio").replace(".mp3", "")
+                    return download_url, title
+                elif data.get("status") == "error":
+                    last_error = data.get("text", last_error)
+        except Exception as e:
+            logging.warning(f"Instance {instance} failed: {e}")
+            continue
+
+    raise Exception(last_error)
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     username = update.message.from_user.username or "User"
@@ -72,49 +116,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please send a valid HTTP/HTTPS media link.")
         return
 
-    status_message = await update.message.reply_text("⚡ Extracting audio via Cobalt API...")
+    status_message = await update.message.reply_text("⚡ Extracting audio stream...")
 
     file_id = str(uuid.uuid4())
     downloaded_file = TEMP_DIR / f"{file_id}.mp3"
 
     try:
-        # Call public Cobalt API endpoint
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "url": text,
-            "downloadMode": "audio",
-            "audioFormat": "mp3",
-        }
+        # Step 1: Extract audio URL using fallback instances
+        download_url, title = await asyncio.to_thread(fetch_audio_from_cobalt, text)
 
-        response = requests.post("https://api.cobalt.tools/", json=payload, headers=headers)
-        res_data = response.json()
-
-        if response.status_code != 200 or "url" not in res_data:
-            error_msg = res_data.get("text", "Could not fetch video stream.")
-            await status_message.edit_text(f"❌ Failed: {error_msg}")
-            return
-
-        download_url = res_data["url"]
-        title = res_data.get("filename", "audio").replace(".mp3", "")
-
-        # Download audio stream to file
-        audio_res = requests.get(download_url, stream=True)
+        # Step 2: Download file locally
+        audio_res = requests.get(download_url, stream=True, timeout=30)
         with open(downloaded_file, "wb") as f:
             for chunk in audio_res.iter_content(chunk_size=8192):
                 f.write(chunk)
 
-        if not downloaded_file.exists():
-            await status_message.edit_text("❌ Audio extraction failed.")
+        if not downloaded_file.exists() or downloaded_file.stat().st_size == 0:
+            await status_message.edit_text("❌ Audio file download failed.")
             return
 
+        # Store pending download
         pending_downloads[user_id] = {
             "title": title,
             "file_path": downloaded_file,
         }
 
+        # Step 3: Show Sponsor Buttons
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎉 1. Click to Open Sponsor Link", url=ADSTERRA_SMARTLINK)],
             [InlineKeyboardButton("✅ 2. I clicked the link (Get Audio)", callback_data="confirm_ad_click")]
@@ -126,7 +153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except Exception as e:
-        logging.error(f"Error handling URL for Telegram ID {user_id}: {e}")
+        logging.error(f"Error processing URL for Telegram ID {user_id}: {e}")
         await status_message.edit_text(f"❌ Processing failed: {str(e)[:100]}")
 
 
@@ -156,7 +183,6 @@ async def ad_click_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         with open(downloaded_file_path, "rb") as audio_file:
             await context.bot.send_audio(
-                chat_id=query.message.chat_id,
                 audio=audio_file,
                 title=title,
                 filename=f"{safe_title}.mp3",
